@@ -31,18 +31,20 @@ def det_ef_opt(parameters):
 
     #Create decision variables for each asset, time period, and scenario
     x = m.addVars(num_assets, time_horizon, vtype = GRB.CONTINUOUS, name = "x", lb = 0, ub = 1)
-    x_invest = m.addVars(num_assets, time_horizon - 1, vtype = GRB.CONTINUOUS, name = "x_invest", lb = 0, ub = 1)
-    x_divest = m.addVars(num_assets, time_horizon - 1, vtype = GRB.CONTINUOUS, name = "x_divest", lb = 0, ub = 1)
+    #x_invest = m.addVars(num_assets, time_horizon - 1, vtype = GRB.CONTINUOUS, name = "x_invest", lb = 0, ub = 1)
+    #x_divest = m.addVars(num_assets, time_horizon - 1, vtype = GRB.CONTINUOUS, name = "x_divest", lb = 0, ub = 1)
+
+    epsilon = 1e-6  # Small value to avoid degeneracy
 
     #Objective function
-    m.setObjective(gp.quicksum(parameters.b[j, t] * x[j, t] for j in range(num_assets) for t in range(time_horizon)), GRB.MAXIMIZE)
+    m.setObjective(gp.quicksum(parameters.b[j, t] * x[j, t] for j in range(num_assets) for t in range(time_horizon)), GRB.MAXIMIZE) #avoid degeneracy
 
     #Constraints
 
     #Portfolio Flow Conservation:
-    for j in range(num_assets):
-        for t in range(time_horizon - 1):
-            m.addConstr(x[j, t + 1] == x[j, t] + x_invest[j, t] - x_divest[j, t], name=f"flow_conservation_{j}_{t}")
+    #for j in range(num_assets):
+    #    for t in range(time_horizon - 1):
+    #        m.addConstr(x[j, t + 1] == x[j, t] + x_invest[j, t] - x_divest[j, t], name=f"flow_conservation_{j}_{t}")
 
     #CAPEX Constraint
     for t in range(time_horizon):
@@ -55,12 +57,12 @@ def det_ef_opt(parameters):
     #Big-M Constraints for Investment and Divestment
     for j in range(num_assets):
         #Use initial positions for the first time period to set the big-M constraints
-        m.addConstr(x_invest[j, 0] <= max(0, parameters.U[j, 1] - parameters.x_initial[j]) * delta[j, 0], name=f"bigM_invest_{j}_0")
-        m.addConstr(x_divest[j, 0] <= max(0, parameters.x_initial[j] - parameters.L[j, 1]) * delta[j, 0], name=f"bigM_divest_{j}_0")
+        m.addConstr(x[j, 1] - parameters.x_initial[j] <= max(0, parameters.U[j, 1] - parameters.x_initial[j]) * delta[j, 0], name=f"bigM_invest_{j}_0")
+        m.addConstr(parameters.x_initial[j] - x[j, 1] <= max(0, parameters.U[j, 0] - parameters.L[j, 1]) * delta[j, 0], name=f"bigM_divest_{j}_0")
 
         for t in range(1, time_horizon - 1):
-            m.addConstr(x_invest[j, t] <= max(0, parameters.U[j, t + 1] - parameters.L[j, t]) * delta[j, t], name=f"bigM_invest_{j}_{t}")
-            m.addConstr(x_divest[j, t] <= max(0, parameters.U[j, t] - parameters.L[j, t + 1]) * delta[j, t], name=f"bigM_divest_{j}_{t}")
+            m.addConstr(x[j, t + 1] - x[j, t] <= max(0, parameters.U[j, t + 1] - parameters.L[j, t]) * delta[j, t], name=f"bigM_invest_{j}_{t}")
+            m.addConstr(x[j, t] - x[j, t + 1] <= max(0, parameters.U[j, t] - parameters.L[j, t + 1]) * delta[j, t], name=f"bigM_divest_{j}_{t}")
 
     #Asset Holding Constraints: Ensure that if an asset is invested/divested, action cannot be taken until h years have passed.
     for j in range(num_assets):
@@ -98,6 +100,34 @@ def det_ef_opt(parameters):
     else:
         return {"status": m.status}
 
+def bound_preprocess(parameters):
+    """
+    This function preprocesses the upper and lower bounds for each asset at each time period.
+
+    Parameters:
+    parameters (dataclass): A dataclass containing all the necessary parameters for the optimization, including:
+        - U: A 2D array of shape (num_assets, time_horizon) representing the upper bounds for each asset at each time period.
+        - L: A 2D array of shape (num_assets, time_horizon) representing the lower bounds for each asset at each time period.
+        - holding_time: A 1D array of shape (num_assets,) representing the minimum holding time for each asset.
+    """
+
+    u = parameters.U.copy()
+    l = parameters.L.copy()
+    h = parameters.holding_time
+
+    time_horizon = parameters.U.shape[1]  # U is a 2D array with shape (num_assets, time_horizon)
+    num_assets = len(parameters.U)
+
+    for j in range(num_assets):
+        for t in range(1, time_horizon):
+            for s in range(1, int(min(h[j], time_horizon - t))):
+                if u[j, t] > max(u[j, t-1], u[j, t+s]):
+                    u[j, t] = max(u[j, t-1], u[j, t+s])
+                if l[j, t] < min(l[j, t-1], l[j, t+s]):
+                    l[j, t] = min(l[j, t-1], l[j, t+s])
+
+    return u, l
+
 
 if __name__ == "__main__":
     from dataclasses import dataclass, field
@@ -109,7 +139,7 @@ if __name__ == "__main__":
         # Number of assets and time horizon
         num_assets: int = 20
         time_horizon: int = 100
-        seed_number: int = 42
+        seed_number: int = 100
 
         # CAPEX constraint
         C_CAPEX: float = 50.0
@@ -136,8 +166,14 @@ if __name__ == "__main__":
 
             #
             #Upper/Lower bound
-            self.L = rng.uniform(0, 0.5, size=(self.num_assets, self.time_horizon))
-            self.U = rng.uniform(0.5, 1.0, size=(self.num_assets, self.time_horizon))
+            l = rng.uniform(0, 0.5, size=(self.num_assets, self.time_horizon))
+            u = rng.uniform(0.5, 1.0, size=(self.num_assets, self.time_horizon))
+
+            l[:, 0] = self.x_initial
+            u[:, 0] = self.x_initial
+
+            self.U = u
+            self.L = l
 
     full_runtime_timer_start = time.time()
     result = det_ef_opt(Parameters())
@@ -146,7 +182,22 @@ if __name__ == "__main__":
     model_building_time = full_runtime_timer_end - full_runtime_timer_start - result['runtime']
 
     #For tracking objective function value
-    print(result)
     print(f"Objective Value: {result['objective_value']}")
     print(f"Runtime: {result['runtime']} seconds")
+    print(f"Model Building Time: {model_building_time} seconds")
+
+    u, l = bound_preprocess(Parameters())
+    p = Parameters()
+    p.U = u
+    p.L = l
+
+    full_runtime_timer_start2 = time.time()
+    result_preprocessed = det_ef_opt(p)
+    full_runtime_timer_end2 = time.time()
+    
+    model_building_time = full_runtime_timer_end2 - full_runtime_timer_start2 - result_preprocessed['runtime']
+    
+    #For tracking objective function value
+    print(f"Objective Value: {result_preprocessed['objective_value']}")
+    print(f"Runtime: {result_preprocessed['runtime']} seconds")
     print(f"Model Building Time: {model_building_time} seconds")
