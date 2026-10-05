@@ -1,6 +1,7 @@
 import gurobipy as gp
 from gurobipy import GRB
 import numpy as np
+import matplotlib.pyplot as plt
 
 #Deterministic Equivalent Formulation
 def det_ef_opt(parameters):
@@ -30,21 +31,22 @@ def det_ef_opt(parameters):
     m = gp.Model("Deterministic_Equivalent_Optimization")
 
     #Create decision variables for each asset, time period, and scenario
-    x = m.addVars(num_assets, time_horizon, vtype = GRB.CONTINUOUS, name = "x", lb = 0, ub = 1)
-    #x_invest = m.addVars(num_assets, time_horizon - 1, vtype = GRB.CONTINUOUS, name = "x_invest", lb = 0, ub = 1)
-    #x_divest = m.addVars(num_assets, time_horizon - 1, vtype = GRB.CONTINUOUS, name = "x_divest", lb = 0, ub = 1)
+    x = m.addVars(num_assets, time_horizon, vtype = GRB.CONTINUOUS, name = "x")
+    x_invest = m.addVars(num_assets, time_horizon - 1, vtype = GRB.CONTINUOUS, name = "x_invest")
+    x_divest = m.addVars(num_assets, time_horizon - 1, vtype = GRB.CONTINUOUS, name = "x_divest")
 
-    epsilon = 1e-6  # Small value to avoid degeneracy
+    epsilon = 1e-12  # Small value to avoid degeneracy
 
     #Objective function
-    m.setObjective(gp.quicksum(parameters.b[j, t] * x[j, t] for j in range(num_assets) for t in range(time_horizon)), GRB.MAXIMIZE) #avoid degeneracy
+    m.setObjective(gp.quicksum(parameters.b[j, t] * x[j, t] for j in range(num_assets) for t in range(time_horizon))
+                   - gp.quicksum(epsilon * (x_invest[j, t] + x_divest[j, t]) for j in range(num_assets) for t in range(time_horizon - 1)), GRB.MAXIMIZE)
 
     #Constraints
 
     #Portfolio Flow Conservation:
-    #for j in range(num_assets):
-    #    for t in range(time_horizon - 1):
-    #        m.addConstr(x[j, t + 1] == x[j, t] + x_invest[j, t] - x_divest[j, t], name=f"flow_conservation_{j}_{t}")
+    for j in range(num_assets):
+        for t in range(time_horizon - 1):
+            m.addConstr(x[j, t + 1] == x[j, t] + x_invest[j, t] - x_divest[j, t], name=f"flow_conservation_{j}_{t}")
 
     #CAPEX Constraint
     for t in range(time_horizon):
@@ -57,13 +59,13 @@ def det_ef_opt(parameters):
     #Big-M Constraints for Investment and Divestment
     for j in range(num_assets):
         #Use initial positions for the first time period to set the big-M constraints
-        m.addConstr(x[j, 1] - parameters.x_initial[j] <= max(0, parameters.U[j, 1] - parameters.x_initial[j]) * delta[j, 0], name=f"bigM_invest_{j}_0")
-        m.addConstr(parameters.x_initial[j] - x[j, 1] <= max(0, parameters.U[j, 0] - parameters.L[j, 1]) * delta[j, 0], name=f"bigM_divest_{j}_0")
+        m.addConstr(x_invest[j, 0] <= max(0, parameters.U[j, 1] - parameters.x_initial[j]) * delta[j, 0], name=f"bigM_invest_{j}_0")
+        m.addConstr(x_divest[j, 0] <= max(0, parameters.x_initial[j] - parameters.L[j, 1]) * delta[j, 0], name=f"bigM_divest_{j}_0")
 
         for t in range(1, time_horizon - 1):
-            m.addConstr(x[j, t + 1] - x[j, t] <= max(0, parameters.U[j, t + 1] - parameters.L[j, t]) * delta[j, t], name=f"bigM_invest_{j}_{t}")
-            m.addConstr(x[j, t] - x[j, t + 1] <= max(0, parameters.U[j, t] - parameters.L[j, t + 1]) * delta[j, t], name=f"bigM_divest_{j}_{t}")
-
+            m.addConstr(x_invest[j, t] <= max(0, parameters.U[j, t + 1] - parameters.L[j, t]) * delta[j, t], name=f"bigM_invest_{j}_{t}")
+            m.addConstr(x_divest[j, t] <= max(0, parameters.U[j, t] - parameters.L[j, t + 1]) * delta[j, t], name=f"bigM_divest_{j}_{t}")
+    
     #Asset Holding Constraints: Ensure that if an asset is invested/divested, action cannot be taken until h years have passed.
     for j in range(num_assets):
         for t in range(time_horizon - int(parameters.holding_time[j])):
@@ -77,9 +79,21 @@ def det_ef_opt(parameters):
 
     #Upper and Lower Bounds for Decision Variables
     for j in range(num_assets):
+        x_invest[j, 0].lb = max(0, parameters.L[j, 1] - parameters.x_initial[j])
+        x_invest[j, 0].ub = max(0, parameters.U[j, 1] - parameters.x_initial[j])
+        x_divest[j, 0].lb = max(0, parameters.x_initial[j] - parameters.U[j, 1])
+        x_divest[j, 0].ub = max(0, parameters.x_initial[j] - parameters.L[j, 1])
+
         for t in range(1, time_horizon):
-            m.addConstr(x[j, t] >= parameters.L[j, t], name=f"lower_bound_{j}_{t}")
-            m.addConstr(x[j, t] <= parameters.U[j, t], name=f"upper_bound_{j}_{t}")
+            x[j, t].lb = parameters.L[j, t]
+            x[j, t].ub = parameters.U[j, t]
+
+            if t < time_horizon - 1: #implied bounds on investment and divestment variables
+                x_invest[j, t].lb = max(0, parameters.L[j, t + 1] - parameters.U[j, t])
+                x_invest[j, t].ub = max(0, parameters.U[j, t + 1] - parameters.L[j, t])
+                x_divest[j, t].lb = max(0, parameters.L[j, t] - parameters.U[j, t + 1])
+                x_divest[j, t].ub = max(0, parameters.U[j, t] - parameters.L[j, t + 1])
+
 
     #Initial Positions x
     for j in range(num_assets):
@@ -137,12 +151,12 @@ if __name__ == "__main__":
     @dataclass
     class Parameters:
         # Number of assets and time horizon
-        num_assets: int = 20
-        time_horizon: int = 100
+        num_assets: int = 40
+        time_horizon: int = 200
         seed_number: int = 100
 
         # CAPEX constraint
-        C_CAPEX: float = 50.0
+        C_CAPEX: float = 500.0
 
         # Defined with __post_init__
         b: np.ndarray = field(init=False)
@@ -154,7 +168,7 @@ if __name__ == "__main__":
 
         def __post_init__(self):
             #Minimum holding
-            self.holding_time = np.ones(self.num_assets) * 2
+            self.holding_time = np.ones(self.num_assets) * 75
 
             #initial positions
             self.x_initial = np.zeros(self.num_assets)  # Initialize with zeros or any other desired initial positions
@@ -186,11 +200,14 @@ if __name__ == "__main__":
     print(f"Runtime: {result['runtime']} seconds")
     print(f"Model Building Time: {model_building_time} seconds")
 
+    preprocess_timer_start = time.time()
     u, l = bound_preprocess(Parameters())
+    preprocess_timer_end = time.time()
+    print(f"Preprocessing Time: {preprocess_timer_end - preprocess_timer_start} seconds")
     p = Parameters()
     p.U = u
     p.L = l
-
+    
     full_runtime_timer_start2 = time.time()
     result_preprocessed = det_ef_opt(p)
     full_runtime_timer_end2 = time.time()
