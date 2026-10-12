@@ -2,6 +2,7 @@ import gurobipy as gp
 from gurobipy import GRB
 import numpy as np
 import matplotlib.pyplot as plt
+import pandas as pd
 
 #Deterministic Equivalent Formulation
 def det_ef_opt(parameters):
@@ -17,6 +18,7 @@ def det_ef_opt(parameters):
         - L: A 2D array of shape (num_assets, time_horizon) representing the lower bounds for each asset at each time period.
         - holding_time: A 1D array of shape (num_assets,) representing the minimum holding time for each asset.
         - x_initial: A 1D array of shape (num_assets,) representing the initial positions for each asset.
+        - version: A string indicating the version of the optimization model to use (default is "v1").
 
     Returns:
     dict: A dictionary containing the optimization results, including:
@@ -32,22 +34,11 @@ def det_ef_opt(parameters):
 
     #Create decision variables for each asset, time period, and scenario
     x = m.addVars(num_assets, time_horizon, vtype = GRB.CONTINUOUS, name = "x")
-    x_invest = m.addVars(num_assets, time_horizon - 1, vtype = GRB.CONTINUOUS, name = "x_invest")
-    x_divest = m.addVars(num_assets, time_horizon - 1, vtype = GRB.CONTINUOUS, name = "x_divest")
-
-    epsilon = 1e-12  # Small value to avoid degeneracy
 
     #Objective function
-    m.setObjective(gp.quicksum(parameters.b[j, t] * x[j, t] for j in range(num_assets) for t in range(time_horizon))
-                   - gp.quicksum(epsilon * (x_invest[j, t] + x_divest[j, t]) for j in range(num_assets) for t in range(time_horizon - 1)), GRB.MAXIMIZE)
+    m.setObjective(gp.quicksum(parameters.b[j, t] * x[j, t] for j in range(num_assets) for t in range(time_horizon)), GRB.MAXIMIZE)
 
     #Constraints
-
-    #Portfolio Flow Conservation:
-    for j in range(num_assets):
-        for t in range(time_horizon - 1):
-            m.addConstr(x[j, t + 1] == x[j, t] + x_invest[j, t] - x_divest[j, t], name=f"flow_conservation_{j}_{t}")
-
     #CAPEX Constraint
     for t in range(time_horizon):
         m.addConstr(
@@ -57,21 +48,47 @@ def det_ef_opt(parameters):
     delta = m.addVars(num_assets, time_horizon - 1, vtype=GRB.BINARY, name="delta")
 
     #Big-M Constraints for Investment and Divestment
-    for j in range(num_assets):
-        #Use initial positions for the first time period to set the big-M constraints
-        m.addConstr(x_invest[j, 0] <= max(0, parameters.U[j, 1] - parameters.x_initial[j]) * delta[j, 0], name=f"bigM_invest_{j}_0")
-        m.addConstr(x_divest[j, 0] <= max(0, parameters.x_initial[j] - parameters.L[j, 1]) * delta[j, 0], name=f"bigM_divest_{j}_0")
+    if parameters.version == "1":
+        for j in range(num_assets):
+            #Use initial positions for the first time period to set the big-M constraints
+            m.addConstr(x[j, 1] - parameters.x_initial[j] <= max(0, parameters.U[j, 1] - parameters.x_initial[j]) * delta[j, 0], name=f"bigM_invest_{j}_0")
+            m.addConstr(parameters.x_initial[j] - x[j, 1] <= max(0, parameters.x_initial[j] - parameters.L[j, 1]) * delta[j, 0], name=f"bigM_divest_{j}_0")
 
-        for t in range(1, time_horizon - 1):
-            m.addConstr(x_invest[j, t] <= max(0, parameters.U[j, t + 1] - parameters.L[j, t]) * delta[j, t], name=f"bigM_invest_{j}_{t}")
-            m.addConstr(x_divest[j, t] <= max(0, parameters.U[j, t] - parameters.L[j, t + 1]) * delta[j, t], name=f"bigM_divest_{j}_{t}")
-    
+            for t in range(1, time_horizon - 1):
+                m.addConstr(x[j, t + 1] - x[j, t] <= max(0, parameters.U[j, t + 1] - parameters.L[j, t]) * delta[j, t], name=f"bigM_invest_{j}_{t}")
+                m.addConstr(x[j, t] - x[j, t + 1] <= max(0, parameters.U[j, t] - parameters.L[j, t + 1]) * delta[j, t], name=f"bigM_divest_{j}_{t}")
+    #Version 2 tighter
+    elif parameters.version == "2":
+        #Defining U_tilde and L_tilde for the tighter big-M constraints
+        U_tilde = np.full(parameters.U.shape, np.nan)
+        L_tilde = np.full(parameters.U.shape, np.nan)
+
+        #Defining U_bar and L_bar for the tighter big-M constraints
+        U_bar = np.full(parameters.U.shape, np.nan)
+        L_bar = np.full(parameters.U.shape, np.nan)
+
+        for j in range(num_assets):
+            for t in range(time_horizon - 1):
+                U_tilde[j, t] = parameters.U[j, t + 1:min(time_horizon, t + 2 + int(parameters.holding_time[j]))].min()
+                L_tilde[j, t] = parameters.L[j, t + 1:min(time_horizon, t + 2 + int(parameters.holding_time[j]))].max()
+
+                U_bar[j, t] = parameters.U[j, max(0, t - int(parameters.holding_time[j])):t + 1].min()
+                L_bar[j, t] = parameters.L[j, max(0, t - int(parameters.holding_time[j])):t + 1].max()
+
+        for j in range(num_assets):
+            m.addConstr(x[j, 1] - parameters.x_initial[j] <= max(0, U_tilde[j, 0] - parameters.x_initial[j]) * delta[j, 0], name=f"bigM_invest_{j}_0")
+            m.addConstr(parameters.x_initial[j] - x[j, 1] <= max(0, parameters.x_initial[j] - L_tilde[j, 0]) * delta[j, 0], name=f"bigM_divest_{j}_0")
+
+            for t in range(1, time_horizon - 1):
+                m.addConstr(x[j, t + 1] - x[j, t] <= max(0, U_tilde[j, t] - L_bar[j, t]) * delta[j, t], name=f"bigM_invest_{j}_{t}")
+                m.addConstr(x[j, t] - x[j, t + 1] <= max(0, U_bar[j, t] - L_tilde[j, t]) * delta[j, t], name=f"bigM_divest_{j}_{t}")
+
     #Asset Holding Constraints: Ensure that if an asset is invested/divested, action cannot be taken until h years have passed.
     for j in range(num_assets):
-        for t in range(time_horizon - int(parameters.holding_time[j])):
+        for t in range(time_horizon - int(parameters.holding_time[j]) - 1):
             m.addConstr(
                 gp.quicksum(
-                    delta[j, s] for s in range(t, t + int(parameters.holding_time[j]))
+                    delta[j, s] for s in range(t, t + int(parameters.holding_time[j]) + 1)
                 ) <= 1,
                 name=f"holding_constraint_{j}_{t}"
             )
@@ -79,20 +96,9 @@ def det_ef_opt(parameters):
 
     #Upper and Lower Bounds for Decision Variables
     for j in range(num_assets):
-        x_invest[j, 0].lb = max(0, parameters.L[j, 1] - parameters.x_initial[j])
-        x_invest[j, 0].ub = max(0, parameters.U[j, 1] - parameters.x_initial[j])
-        x_divest[j, 0].lb = max(0, parameters.x_initial[j] - parameters.U[j, 1])
-        x_divest[j, 0].ub = max(0, parameters.x_initial[j] - parameters.L[j, 1])
-
         for t in range(1, time_horizon):
             x[j, t].lb = parameters.L[j, t]
             x[j, t].ub = parameters.U[j, t]
-
-            if t < time_horizon - 1: #implied bounds on investment and divestment variables
-                x_invest[j, t].lb = max(0, parameters.L[j, t + 1] - parameters.U[j, t])
-                x_invest[j, t].ub = max(0, parameters.U[j, t + 1] - parameters.L[j, t])
-                x_divest[j, t].lb = max(0, parameters.L[j, t] - parameters.U[j, t + 1])
-                x_divest[j, t].ub = max(0, parameters.U[j, t] - parameters.L[j, t + 1])
 
 
     #Initial Positions x
@@ -142,6 +148,90 @@ def bound_preprocess(parameters):
 
     return u, l
 
+def plot_bounds(u, l, asset_idx=0):
+    """
+    Plot upper and lower bounds for a single asset.
+
+    Parameters
+    ----------
+    u: A 2D array upper bounds with shape (num_assets, time_horizon).
+    l: A 2D array lower bounds with shape (num_assets, time_horizon).
+    asset_idx: int index of the asset to plot.
+
+    Returns
+    -------
+    fig, ax: Matplotlib figure and axis objects.
+    """
+    if u.shape != l.shape:
+        raise ValueError("u and l must have the same shape.")
+
+    if u.ndim != 2:
+        raise ValueError("u and l must be 2D arrays.")
+
+    if not 0 <= asset_idx < u.shape[0]:
+        raise IndexError("asset_idx is out of range.")
+
+    x = np.arange(u.shape[1])
+
+    upper = u[asset_idx]
+    lower = l[asset_idx]
+
+    fig, ax = plt.subplots(figsize=(10, 4))
+
+    ax.plot(x, lower, label="Lower bound")
+    ax.plot(x, upper, label="Upper bound")
+    ax.fill_between(x, lower, upper, alpha=0.25)
+
+    ax.set_ylim(0, 1)
+    ax.set_xlabel("Time")
+    ax.set_ylabel("Value")
+    ax.set_title(f"Upper and Lower Bounds — Asset {asset_idx}")
+    ax.legend()
+    ax.grid(alpha=0.3)
+
+    return fig, ax
+
+###debug delete after fixed
+def compare_solutions(result, result_preprocessed, tol=1e-6):
+    x1 = result["decision_variables"]
+    x2 = result_preprocessed["decision_variables"]
+
+    # Align variables by name, including variables missing from either model
+    df = pd.DataFrame({
+        "original": pd.Series(x1, dtype=float),
+        "preprocessed": pd.Series(x2, dtype=float),
+    })
+
+    df["difference"] = df["original"] - df["preprocessed"]
+    df["abs_difference"] = df["difference"].abs()
+
+    # Identify missing variables separately
+    df["missing_in_original"] = df["original"].isna()
+    df["missing_in_preprocessed"] = df["preprocessed"].isna()
+
+    # Only compare numerical values where both exist
+    df["different"] = (
+        (df["abs_difference"] > tol)
+        | df["missing_in_original"]
+        | df["missing_in_preprocessed"]
+    )
+
+    differences = df[df["different"]].sort_values(
+        "abs_difference", ascending=False, na_position="last"
+    )
+
+    print("Objective values:")
+    print(f"Original:     {result['objective_value']}")
+    print(f"Preprocessed: {result_preprocessed['objective_value']}")
+
+    print(f"\nTotal variables (union): {len(df)}")
+    print(f"Different variables:     {len(differences)}")
+    print(f"Missing in original:     {df['missing_in_original'].sum()}")
+    print(f"Missing in preprocessed: {df['missing_in_preprocessed'].sum()}")
+    print(f"Max absolute difference: {df['abs_difference'].max()}")
+
+    return differences, df
+#################
 
 if __name__ == "__main__":
     from dataclasses import dataclass, field
@@ -158,6 +248,9 @@ if __name__ == "__main__":
         # CAPEX constraint
         C_CAPEX: float = 500.0
 
+        #Version of the optimization model to use
+        version: str = "1"  # Default version is "1"
+
         # Defined with __post_init__
         b: np.ndarray = field(init=False)
         cost: np.ndarray = field(init=False)
@@ -168,7 +261,7 @@ if __name__ == "__main__":
 
         def __post_init__(self):
             #Minimum holding
-            self.holding_time = np.ones(self.num_assets) * 75
+            self.holding_time = np.ones(self.num_assets) * 25
 
             #initial positions
             self.x_initial = np.zeros(self.num_assets)  # Initialize with zeros or any other desired initial positions
@@ -189,6 +282,8 @@ if __name__ == "__main__":
             self.U = u
             self.L = l
 
+    #run optimisation and track runtime
+    
     full_runtime_timer_start = time.time()
     result = det_ef_opt(Parameters())
     full_runtime_timer_end = time.time()
@@ -199,14 +294,22 @@ if __name__ == "__main__":
     print(f"Objective Value: {result['objective_value']}")
     print(f"Runtime: {result['runtime']} seconds")
     print(f"Model Building Time: {model_building_time} seconds")
-
-    preprocess_timer_start = time.time()
+    """
+    #plot bounds for the first asset without preprocessing
+    p = Parameters()
+    fig, ax = plot_bounds(p.U, p.L, asset_idx=0)
+    plt.show()
+    """
+    #run optimisation with the bound preprocess procedure and track runtime
     u, l = bound_preprocess(Parameters())
-    preprocess_timer_end = time.time()
-    print(f"Preprocessing Time: {preprocess_timer_end - preprocess_timer_start} seconds")
     p = Parameters()
     p.U = u
     p.L = l
+    p.version = "2"  # Use version 2 for the optimization model
+
+    #plot bounds for the first asset with preprocessing
+    #fig, ax = plot_bounds(p.U, p.L, asset_idx=0)
+    #plt.show()
     
     full_runtime_timer_start2 = time.time()
     result_preprocessed = det_ef_opt(p)
@@ -218,3 +321,10 @@ if __name__ == "__main__":
     print(f"Objective Value: {result_preprocessed['objective_value']}")
     print(f"Runtime: {result_preprocessed['runtime']} seconds")
     print(f"Model Building Time: {model_building_time} seconds")
+
+    differences, comparison = compare_solutions(
+        result,
+        result_preprocessed
+    )
+
+    print(differences.to_string())
