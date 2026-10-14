@@ -45,27 +45,31 @@ def det_ef_opt(parameters):
             gp.quicksum(parameters.cost[j, t] * x[j, t] for j in range(num_assets)) <= parameters.C_CAPEX, name=f"CAPEX_constraint_{t}")
 
     #Auxiliary Binary Variables for Investment and Divestment
-    delta = m.addVars(num_assets, time_horizon - 1, vtype=GRB.BINARY, name="delta")
+    delta = m.addVars(num_assets, time_horizon, vtype=GRB.BINARY, name="delta")
 
     #Big-M Constraints for Investment and Divestment
     if parameters.version == "1":
         #Upper and Lower Bounds for Decision Variables
         for j in range(num_assets):
-            for t in range(1, time_horizon):
+            for t in range(time_horizon):
                 x[j, t].lb = parameters.L[j, t]
                 x[j, t].ub = parameters.U[j, t]
 
         for j in range(num_assets):
             #Use initial positions for the first time period to set the big-M constraints
-            m.addConstr(x[j, 1] - parameters.x_initial[j] <= max(0, parameters.U[j, 1] - parameters.x_initial[j]) * delta[j, 0], name=f"bigM_invest_{j}_0")
-            m.addConstr(parameters.x_initial[j] - x[j, 1] <= max(0, parameters.x_initial[j] - parameters.L[j, 1]) * delta[j, 0], name=f"bigM_divest_{j}_0")
+            m.addConstr(x[j, 0] - parameters.x_initial[j] <= max(0, parameters.U[j, 0] - parameters.x_initial[j]) * delta[j, 0], name=f"bigM_invest_{j}_0")
+            m.addConstr(parameters.x_initial[j] - x[j, 0] <= max(0, parameters.x_initial[j] - parameters.L[j, 0]) * delta[j, 0], name=f"bigM_divest_{j}_0")
 
-            for t in range(1, time_horizon - 1):
-                m.addConstr(x[j, t + 1] - x[j, t] <= max(0, parameters.U[j, t + 1] - parameters.L[j, t]) * delta[j, t], name=f"bigM_invest_{j}_{t}")
-                m.addConstr(x[j, t] - x[j, t + 1] <= max(0, parameters.U[j, t] - parameters.L[j, t + 1]) * delta[j, t], name=f"bigM_divest_{j}_{t}")
+            for t in range(1, time_horizon):
+                m.addConstr(x[j, t] - x[j, t - 1] <= max(0, parameters.U[j, t] - parameters.L[j, t - 1]) * delta[j, t], name=f"bigM_invest_{j}_{t}")
+                m.addConstr(x[j, t - 1] - x[j, t] <= max(0, parameters.U[j, t - 1] - parameters.L[j, t]) * delta[j, t], name=f"bigM_divest_{j}_{t}")
     
     #Version 2 tighter
     elif parameters.version == "2":
+        #Temp U and L
+        temp_U = np.column_stack((parameters.x_initial, parameters.U))
+        temp_L = np.column_stack((parameters.x_initial, parameters.L))
+
         #Defining U_tilde and L_tilde for the tighter big-M constraints
         U_tilde = np.full(parameters.U.shape, np.nan)
         L_tilde = np.full(parameters.U.shape, np.nan)
@@ -76,51 +80,57 @@ def det_ef_opt(parameters):
 
         #Define U_tilde, L_tilde, U_bar, and L_bar based on the holding time for each asset
         for j in range(num_assets):
-            for t in range(time_horizon - 1):
-                U_tilde[j, t] = parameters.U[j, t + 1:min(time_horizon, t + 2 + int(parameters.holding_time[j]))].min()
-                L_tilde[j, t] = parameters.L[j, t + 1:min(time_horizon, t + 2 + int(parameters.holding_time[j]))].max()
+            for t in range(time_horizon):
+                U_tilde[j, t] = temp_U[j, t + 1:min(time_horizon + 2, t + 2 + int(parameters.holding_time[j]))].min()
+                L_tilde[j, t] = temp_L[j, t + 1:min(time_horizon + 2, t + 2 + int(parameters.holding_time[j]))].max()
 
-                U_bar[j, t] = parameters.U[j, max(0, t - int(parameters.holding_time[j])):t + 1].min()
-                L_bar[j, t] = parameters.L[j, max(0, t - int(parameters.holding_time[j])):t + 1].max()
+                if t == 0:
+                    U_bar[j, t] = parameters.x_initial[j]
+                    L_bar[j, t] = parameters.x_initial[j]
+                else:
+                    U_bar[j, t] = temp_U[j, max(0, t + 1 - int(parameters.holding_time[j])):t + 1].min()
+                    L_bar[j, t] = temp_L[j, max(0, t + 1 - int(parameters.holding_time[j])):t + 1].max()
 
         #Tighter Big-M Constraints for Investment and Divestment
         for j in range(num_assets):
-            m.addConstr(x[j, 1] - parameters.x_initial[j] <= max(0, U_tilde[j, 0] - parameters.x_initial[j]) * delta[j, 0], name=f"bigM_invest_{j}_0")
-            m.addConstr(parameters.x_initial[j] - x[j, 1] <= max(0, parameters.x_initial[j] - L_tilde[j, 0]) * delta[j, 0], name=f"bigM_divest_{j}_0")
-
-            for t in range(1, time_horizon - 1):
-                m.addConstr(x[j, t + 1] - x[j, t] <= max(0, U_tilde[j, t] - L_bar[j, t]) * delta[j, t], name=f"bigM_invest_{j}_{t}")
-                m.addConstr(x[j, t] - x[j, t + 1] <= max(0, U_bar[j, t] - L_tilde[j, t]) * delta[j, t], name=f"bigM_divest_{j}_{t}")
+            m.addConstr(x[j, 0] - parameters.x_initial[j] <= max(0, U_tilde[j, 0] - parameters.x_initial[j]) * delta[j, 0], name=f"bigM_invest_{j}_0")
+            m.addConstr(parameters.x_initial[j] - x[j, 0] <= max(0, parameters.x_initial[j] - L_tilde[j, 0]) * delta[j, 0], name=f"bigM_divest_{j}_0")
+        
+            for t in range(1, time_horizon):
+                m.addConstr(x[j, t] - x[j, t - 1] <= max(0, U_tilde[j, t] - L_bar[j, t]) * delta[j, t], name=f"bigM_invest_{j}_{t}")
+                m.addConstr(x[j, t - 1] - x[j, t] <= max(0, U_bar[j, t] - L_tilde[j, t]) * delta[j, t], name=f"bigM_divest_{j}_{t}")
 
         #Tighter Upper and Lower Bounds for Decision Variables
         """double check later if correct logic for the upper and lower bounds"""
         for j in range(num_assets):
-            for t in range(1, time_horizon):
+            for t in range(time_horizon):
                 #Upper Bound Constraint
-                m.addConstr(x[j, t] <= parameters.U[j, t] 
-                            - gp.quicksum((parameters.U[j, t] - U_tilde[j, s])*delta[j, s] for s in range(max(0, t - int(parameters.holding_time[j])), t))
-                            - gp.quicksum((parameters.U[j, t] - U_bar[j, s])*delta[j, s] for s in range(t, min(time_horizon - 1, t + int(parameters.holding_time[j]))))
+                m.addConstr(x[j, t] <= U_bar[j, t] 
+                            + gp.quicksum((U_tilde[j, s] - U_bar[j, t])*delta[j, s] for s in range(max(0, t - int(parameters.holding_time[j])), t + 1))
                             , name=f"upper_bound_{j}_{t}")
 
+                m.addConstr(x[j, t] <= U_tilde[j, t] 
+                            + gp.quicksum((U_bar[j, s] - U_tilde[j, t])*delta[j, s] for s in range(t + 1, min(time_horizon, t + int(parameters.holding_time[j]) + 1)))
+                            , name=f"upper_bound_2_{j}_{t}")
+                
                 #Lower Bound Constraint
-                m.addConstr(x[j, t] >= parameters.L[j, t]
-                            + gp.quicksum((L_tilde[j, s] - parameters.L[j, t])*delta[j, s] for s in range(max(0, t - int(parameters.holding_time[j])), t))
-                            + gp.quicksum((L_bar[j, s] - parameters.L[j, t])*delta[j, s] for s in range(t, min(time_horizon - 1, t + int(parameters.holding_time[j]))))
+                m.addConstr(x[j, t] >= L_bar[j, t]
+                            + gp.quicksum((L_tilde[j, s] - L_bar[j, t])*delta[j, s] for s in range(max(0, t - int(parameters.holding_time[j])), t + 1))
                             , name=f"lower_bound_{j}_{t}")
+
+                m.addConstr(x[j, t] >= L_tilde[j, t]
+                            + gp.quicksum((L_bar[j, s] - L_tilde[j, t])*delta[j, s] for s in range(t + 1, min(time_horizon, t + int(parameters.holding_time[j]) + 1)))
+                            , name=f"lower_bound_2_{j}_{t}")
 
     #Asset Holding Constraints: Ensure that if an asset is invested/divested, action cannot be taken until h years have passed.
     for j in range(num_assets):
-        for t in range(time_horizon - int(parameters.holding_time[j]) - 1):
+        for t in range(time_horizon - int(parameters.holding_time[j])):
             m.addConstr(
                 gp.quicksum(
                     delta[j, s] for s in range(t, t + int(parameters.holding_time[j]) + 1)
                 ) <= 1,
                 name=f"holding_constraint_{j}_{t}"
             )
-
-    #Initial Positions x
-    for j in range(num_assets):
-        m.addConstr(x[j, 0] == parameters.x_initial[j], name=f"initial_position_{j}")
 
     #Optimize the model
     m.optimize()
@@ -278,7 +288,7 @@ if __name__ == "__main__":
 
         def __post_init__(self):
             #Minimum holding
-            self.holding_time = np.ones(self.num_assets) * 25
+            self.holding_time = np.ones(self.num_assets) * 10
 
             #initial positions
             self.x_initial = np.zeros(self.num_assets)  # Initialize with zeros or any other desired initial positions
@@ -292,9 +302,6 @@ if __name__ == "__main__":
             #Upper/Lower bound
             l = rng.uniform(0, 0.5, size=(self.num_assets, self.time_horizon))
             u = rng.uniform(0.5, 1.0, size=(self.num_assets, self.time_horizon))
-
-            l[:, 0] = self.x_initial
-            u[:, 0] = self.x_initial
 
             self.U = u
             self.L = l
@@ -346,4 +353,4 @@ if __name__ == "__main__":
     #    result_preprocessed
     #)
 
-    print(differences.to_string())
+    #print(differences.to_string())
