@@ -3,6 +3,7 @@ from gurobipy import GRB
 import numpy as np
 import matplotlib.pyplot as plt
 import pandas as pd
+from scipy.sparse import coo_matrix
 
 #Deterministic Equivalent Formulation
 def det_ef_opt(parameters):
@@ -102,7 +103,6 @@ def det_ef_opt(parameters):
                 m.addConstr(x[j, t - 1] - x[j, t] <= (U_bar[j, t] - L_tilde[j, t]) * delta[j, t], name=f"bigM_divest_{j}_{t}")
 
         #Tighter Upper and Lower Bounds for Decision Variables
-        """double check later if correct logic for the upper and lower bounds"""
         for j in range(num_assets):
             for t in range(time_horizon):
                 #Upper Bound Constraint
@@ -122,6 +122,109 @@ def det_ef_opt(parameters):
                 m.addConstr(x[j, t] >= L_tilde[j, t]
                             + gp.quicksum((L_bar[j, s] - L_tilde[j, t])*delta[j, s] for s in range(t + 1, min(time_horizon, t + int(parameters.holding_time[j]) + 1)))
                             , name=f"lower_bound_2_{j}_{t}")
+
+        """
+        #The following is a addMConstr approach to avoid repeated addConstr call. Unsure whether this is an improvement in performance. Need to test.
+
+        variables = ([x[j, t] for j in range(num_assets) for t in range(time_horizon)] + [delta[j, t] for j in range(num_assets) for t in range(time_horizon)])
+
+        rows = []
+        cols = []
+        data = []
+
+        rhs = []
+        senses = []
+        names = []
+
+        row_idx = 0
+
+        for j in range(num_assets):
+            for t in range(time_horizon):
+                x_idx = j * time_horizon + t
+
+                #Upper Bound for x[j, t] 1:
+
+                rows.append(row_idx)
+                cols.append(x_idx)
+                data.append(1.0)
+
+                for s in range(max(0, t - int(parameters.holding_time[j])), t + 1):
+                    coeff = U_tilde[j, s] - U_bar[j, t]
+
+                    if coeff != 0:
+                        rows.append(row_idx)
+                        cols.append(num_assets * time_horizon + j * time_horizon + s)
+                        data.append(-coeff)
+
+                rhs.append(U_bar[j, t])
+                senses.append("<=")
+                names.append(f"upper_bound_{j}_{t}_1")
+                row_idx += 1
+
+                #Upper Bound for x[j, t] 2:
+
+                rows.append(row_idx)
+                cols.append(x_idx)
+                data.append(1.0)
+
+                for s in range(t + 1, min(time_horizon, t + 1 + int(parameters.holding_time[j]))):
+                    coeff = U_bar[j, s] - U_tilde[j, t]
+
+                    if coeff != 0:
+                        rows.append(row_idx)
+                        cols.append(num_assets * time_horizon + j * time_horizon + s)
+                        data.append(-coeff)
+
+                rhs.append(U_tilde[j, t])
+                senses.append("<=")
+                names.append(f"upper_bound_{j}_{t}_2")
+
+                row_idx += 1
+
+                #Lower Bound for x[j, t] 1:
+                
+                rows.append(row_idx)
+                cols.append(x_idx)
+                data.append(1.0)
+
+                for s in range(max(0, t - int(parameters.holding_time[j])), t + 1):
+                    coeff = L_tilde[j, s] - L_bar[j, t]
+
+                    if coeff != 0:
+                        rows.append(row_idx)
+                        cols.append(num_assets * time_horizon + j * time_horizon + s)
+                        data.append(-coeff)
+
+                rhs.append(L_bar[j, t])
+                senses.append(">=")
+                names.append(f"lower_bound_{j}_{t}_1")
+
+                row_idx += 1
+
+                #Lower Bound for x[j, t] 2:
+                rows.append(row_idx)
+                cols.append(x_idx)
+                data.append(1.0)
+
+                for s in range(t + 1, min(time_horizon, t + 1 + int(parameters.holding_time[j]))):
+                    coeff = L_bar[j, s] - L_tilde[j, t]
+
+                    if coeff != 0:
+                        rows.append(row_idx)
+                        cols.append(num_assets * time_horizon + j * time_horizon + s)
+                        data.append(-coeff)
+
+                rhs.append(L_tilde[j, t])
+                senses.append(">=")
+                names.append(f"lower_bound_{j}_{t}_2")
+                
+                row_idx += 1
+
+        #Create the sparse matrix for the constraints
+        A = coo_matrix((data, (rows, cols)), shape=(row_idx, 2 * num_assets * time_horizon)).tocsr()
+
+        m.addMConstr(A, variables, np.array(senses, dtype="S1"), np.asarray(rhs, dtype=float), name = names)
+        """
 
     #Asset Holding Constraints: Ensure that if an asset is invested/divested, action cannot be taken until h years have passed.
     for j in range(num_assets):
@@ -167,12 +270,16 @@ def bound_preprocess(parameters):
     num_assets = len(parameters.U)
 
     for j in range(num_assets):
-        for t in range(1, time_horizon):
-            for s in range(1, int(min(h[j], time_horizon - t))):
-                if u[j, t] > max(u[j, t-1], u[j, t+s]):
-                    u[j, t] = max(u[j, t-1], u[j, t+s])
-                if l[j, t] < min(l[j, t-1], l[j, t+s]):
-                    l[j, t] = min(l[j, t-1], l[j, t+s])
+        for t in range(time_horizon - 1):
+            alpha = min(u[j, s] for s in range(t + 1, min(time_horizon, t + 1 + int(h[j]))))
+            replacement = max(u[j, t-1], alpha)
+            if u[j, t] > replacement:
+                u[j, t] = replacement
+
+            beta = max(l[j, s] for s in range(t + 1, min(time_horizon, t + 1 + int(h[j]))))
+            replacement = min(l[j, t-1], beta)
+            if l[j, t] < replacement:
+                l[j, t] = replacement
 
     return u, l
 
@@ -325,8 +432,12 @@ if __name__ == "__main__":
     fig, ax = plot_bounds(p.U, p.L, asset_idx=0)
     plt.show()
     """
+
     #run optimisation with the bound preprocess procedure and track runtime
+    bound_preprocess_timer_start = time.time()
     u, l = bound_preprocess(Parameters())
+    bound_preprocess_timer_end = time.time()
+    print(f"Bound Preprocessing Time: {bound_preprocess_timer_end - bound_preprocess_timer_start} seconds")
     p = Parameters()
     p.U = u
     p.L = l
