@@ -57,12 +57,13 @@ def det_ef_opt(parameters):
 
         for j in range(num_assets):
             #Use initial positions for the first time period to set the big-M constraints
-            m.addConstr(x[j, 0] - parameters.x_initial[j] <= max(0, parameters.U[j, 0] - parameters.x_initial[j]) * delta[j, 0], name=f"bigM_invest_{j}_0")
-            m.addConstr(parameters.x_initial[j] - x[j, 0] <= max(0, parameters.x_initial[j] - parameters.L[j, 0]) * delta[j, 0], name=f"bigM_divest_{j}_0")
+            m.addConstr(x[j, 0] - parameters.x_initial[j] <= (parameters.U[j, 0] - parameters.x_initial[j]) * delta[j, 0], name=f"bigM_invest_{j}_0")
+            m.addConstr(parameters.x_initial[j] - x[j, 0] <= (parameters.x_initial[j] - parameters.L[j, 0]) * delta[j, 0], name=f"bigM_divest_{j}_0")
+
 
             for t in range(1, time_horizon):
-                m.addConstr(x[j, t] - x[j, t - 1] <= max(0, parameters.U[j, t] - parameters.L[j, t - 1]) * delta[j, t], name=f"bigM_invest_{j}_{t}")
-                m.addConstr(x[j, t - 1] - x[j, t] <= max(0, parameters.U[j, t - 1] - parameters.L[j, t]) * delta[j, t], name=f"bigM_divest_{j}_{t}")
+                m.addConstr(x[j, t] - x[j, t - 1] <= (parameters.U[j, t] - parameters.L[j, t - 1]) * delta[j, t], name=f"bigM_invest_{j}_{t}")
+                m.addConstr(x[j, t - 1] - x[j, t] <= (parameters.U[j, t - 1] - parameters.L[j, t]) * delta[j, t], name=f"bigM_divest_{j}_{t}")
     
     #Version 2 tighter
     elif parameters.version == "2":
@@ -93,12 +94,12 @@ def det_ef_opt(parameters):
 
         #Tighter Big-M Constraints for Investment and Divestment
         for j in range(num_assets):
-            m.addConstr(x[j, 0] - parameters.x_initial[j] <= max(0, U_tilde[j, 0] - parameters.x_initial[j]) * delta[j, 0], name=f"bigM_invest_{j}_0")
-            m.addConstr(parameters.x_initial[j] - x[j, 0] <= max(0, parameters.x_initial[j] - L_tilde[j, 0]) * delta[j, 0], name=f"bigM_divest_{j}_0")
+            m.addConstr(x[j, 0] - parameters.x_initial[j] <= (U_tilde[j, 0] - parameters.x_initial[j]) * delta[j, 0], name=f"bigM_invest_{j}_0")
+            m.addConstr(parameters.x_initial[j] - x[j, 0] <= (parameters.x_initial[j] - L_tilde[j, 0]) * delta[j, 0], name=f"bigM_divest_{j}_0")
         
             for t in range(1, time_horizon):
-                m.addConstr(x[j, t] - x[j, t - 1] <= max(0, U_tilde[j, t] - L_bar[j, t]) * delta[j, t], name=f"bigM_invest_{j}_{t}")
-                m.addConstr(x[j, t - 1] - x[j, t] <= max(0, U_bar[j, t] - L_tilde[j, t]) * delta[j, t], name=f"bigM_divest_{j}_{t}")
+                m.addConstr(x[j, t] - x[j, t - 1] <= (U_tilde[j, t] - L_bar[j, t]) * delta[j, t], name=f"bigM_invest_{j}_{t}")
+                m.addConstr(x[j, t - 1] - x[j, t] <= (U_bar[j, t] - L_tilde[j, t]) * delta[j, t], name=f"bigM_divest_{j}_{t}")
 
         #Tighter Upper and Lower Bounds for Decision Variables
         """double check later if correct logic for the upper and lower bounds"""
@@ -288,7 +289,7 @@ if __name__ == "__main__":
 
         def __post_init__(self):
             #Minimum holding
-            self.holding_time = np.ones(self.num_assets) * 10
+            self.holding_time = np.ones(self.num_assets) * 25
 
             #initial positions
             self.x_initial = np.zeros(self.num_assets)  # Initialize with zeros or any other desired initial positions
