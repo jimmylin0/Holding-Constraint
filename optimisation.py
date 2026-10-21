@@ -49,7 +49,6 @@ def det_ef_opt(parameters):
     delta = m.addVars(num_assets, time_horizon, vtype=GRB.BINARY, name="delta")
 
     if parameters.tighterM is True or parameters.vb is True:
-        print("test 1")
         temp_U = np.column_stack((parameters.x_initial, parameters.U))
         temp_L = np.column_stack((parameters.x_initial, parameters.L))
         
@@ -76,7 +75,6 @@ def det_ef_opt(parameters):
 
         #Variable bounds
         if parameters.vb is True:
-            print("vb bracket")
             #Tighter Upper and Lower Bounds for Decision Variables
             for j in range(num_assets):
                 for t in range(time_horizon):
@@ -97,9 +95,111 @@ def det_ef_opt(parameters):
                     m.addConstr(x[j, t] >= L_tilde[j, t]
                                 + gp.quicksum((L_bar[j, s] - L_tilde[j, t])*delta[j, s] for s in range(t + 1, min(time_horizon, t + int(parameters.holding_time[j]) + 1)))
                                 , name=f"lower_bound_2_{j}_{t}")
+
+            """
+            #The following is a addMConstr approach to avoid repeated addConstr call. Unsure whether this is an improvement in performance. Need to test.
+
+            variables = ([x[j, t] for j in range(num_assets) for t in range(time_horizon)] + [delta[j, t] for j in range(num_assets) for t in range(time_horizon)])
+
+            rows = []
+            cols = []
+            data = []
+
+            rhs = []
+            senses = []
+            names = []
+
+            row_idx = 0
+
+            for j in range(num_assets):
+                for t in range(time_horizon):
+                    x_idx = j * time_horizon + t
+
+                    #Upper Bound for x[j, t] 1:
+
+                    rows.append(row_idx)
+                    cols.append(x_idx)
+                    data.append(1.0)
+
+                    for s in range(max(0, t - int(parameters.holding_time[j])), t + 1):
+                        coeff = U_tilde[j, s] - U_bar[j, t]
+
+                        if coeff != 0:
+                            rows.append(row_idx)
+                            cols.append(num_assets * time_horizon + j * time_horizon + s)
+                            data.append(-coeff)
+
+                    rhs.append(U_bar[j, t])
+                    senses.append("<=")
+                    names.append(f"upper_bound_{j}_{t}_1")
+                    row_idx += 1
+
+                    #Upper Bound for x[j, t] 2:
+
+                    rows.append(row_idx)
+                    cols.append(x_idx)
+                    data.append(1.0)
+
+                    for s in range(t + 1, min(time_horizon, t + 1 + int(parameters.holding_time[j]))):
+                        coeff = U_bar[j, s] - U_tilde[j, t]
+
+                        if coeff != 0:
+                            rows.append(row_idx)
+                            cols.append(num_assets * time_horizon + j * time_horizon + s)
+                            data.append(-coeff)
+
+                    rhs.append(U_tilde[j, t])
+                    senses.append("<=")
+                    names.append(f"upper_bound_{j}_{t}_2")
+
+                    row_idx += 1
+
+                    #Lower Bound for x[j, t] 1:
+                    
+                    rows.append(row_idx)
+                    cols.append(x_idx)
+                    data.append(1.0)
+
+                    for s in range(max(0, t - int(parameters.holding_time[j])), t + 1):
+                        coeff = L_tilde[j, s] - L_bar[j, t]
+
+                        if coeff != 0:
+                            rows.append(row_idx)
+                            cols.append(num_assets * time_horizon + j * time_horizon + s)
+                            data.append(-coeff)
+
+                    rhs.append(L_bar[j, t])
+                    senses.append(">=")
+                    names.append(f"lower_bound_{j}_{t}_1")
+
+                    row_idx += 1
+
+                    #Lower Bound for x[j, t] 2:
+                    rows.append(row_idx)
+                    cols.append(x_idx)
+                    data.append(1.0)
+
+                    for s in range(t + 1, min(time_horizon, t + 1 + int(parameters.holding_time[j]))):
+                        coeff = L_bar[j, s] - L_tilde[j, t]
+
+                        if coeff != 0:
+                            rows.append(row_idx)
+                            cols.append(num_assets * time_horizon + j * time_horizon + s)
+                            data.append(-coeff)
+
+                    rhs.append(L_tilde[j, t])
+                    senses.append(">=")
+                    names.append(f"lower_bound_{j}_{t}_2")
+                    
+                    row_idx += 1
+
+            #Create the sparse matrix for the constraints
+            A = coo_matrix((data, (rows, cols)), shape=(row_idx, 2 * num_assets * time_horizon)).tocsr()
+
+            m.addMConstr(A, variables, np.array(senses, dtype="S1"), np.asarray(rhs, dtype=float), name = names)"""
+
         #Tighter M
         if parameters.tighterM is True:
-            print("big M bracket")
             #Tighter Big-M Constraints for Investment and Divestment
             for j in range(num_assets):
                 m.addConstr(x[j, 0] - parameters.x_initial[j] <= (U_tilde[j, 0] - parameters.x_initial[j]) * delta[j, 0], name=f"bigM_invest_{j}_0")
@@ -110,7 +210,6 @@ def det_ef_opt(parameters):
                     m.addConstr(x[j, t - 1] - x[j, t] <= (U_bar[j, t] - L_tilde[j, t]) * delta[j, t], name=f"bigM_divest_{j}_{t}")
     
     if parameters.vb is False:
-        print("no vb")
         #Upper and Lower Bounds for Decision Variables
         for j in range(num_assets):
             for t in range(time_horizon):
@@ -118,7 +217,6 @@ def det_ef_opt(parameters):
                 x[j, t].ub = parameters.U[j, t]
 
     if parameters.tighterM is False:
-        print("no big M")
         for j in range(num_assets):
             #Use initial positions for the first time period to set the big-M constraints
             m.addConstr(x[j, 0] - parameters.x_initial[j] <= (parameters.U[j, 0] - parameters.x_initial[j]) * delta[j, 0], name=f"bigM_invest_{j}_0")
@@ -128,110 +226,6 @@ def det_ef_opt(parameters):
             for t in range(1, time_horizon):
                 m.addConstr(x[j, t] - x[j, t - 1] <= (parameters.U[j, t] - parameters.L[j, t - 1]) * delta[j, t], name=f"bigM_invest_{j}_{t}")
                 m.addConstr(x[j, t - 1] - x[j, t] <= (parameters.U[j, t - 1] - parameters.L[j, t]) * delta[j, t], name=f"bigM_divest_{j}_{t}")
-
-
-        """
-        #The following is a addMConstr approach to avoid repeated addConstr call. Unsure whether this is an improvement in performance. Need to test.
-
-        variables = ([x[j, t] for j in range(num_assets) for t in range(time_horizon)] + [delta[j, t] for j in range(num_assets) for t in range(time_horizon)])
-
-        rows = []
-        cols = []
-        data = []
-
-        rhs = []
-        senses = []
-        names = []
-
-        row_idx = 0
-
-        for j in range(num_assets):
-            for t in range(time_horizon):
-                x_idx = j * time_horizon + t
-
-                #Upper Bound for x[j, t] 1:
-
-                rows.append(row_idx)
-                cols.append(x_idx)
-                data.append(1.0)
-
-                for s in range(max(0, t - int(parameters.holding_time[j])), t + 1):
-                    coeff = U_tilde[j, s] - U_bar[j, t]
-
-                    if coeff != 0:
-                        rows.append(row_idx)
-                        cols.append(num_assets * time_horizon + j * time_horizon + s)
-                        data.append(-coeff)
-
-                rhs.append(U_bar[j, t])
-                senses.append("<=")
-                names.append(f"upper_bound_{j}_{t}_1")
-                row_idx += 1
-
-                #Upper Bound for x[j, t] 2:
-
-                rows.append(row_idx)
-                cols.append(x_idx)
-                data.append(1.0)
-
-                for s in range(t + 1, min(time_horizon, t + 1 + int(parameters.holding_time[j]))):
-                    coeff = U_bar[j, s] - U_tilde[j, t]
-
-                    if coeff != 0:
-                        rows.append(row_idx)
-                        cols.append(num_assets * time_horizon + j * time_horizon + s)
-                        data.append(-coeff)
-
-                rhs.append(U_tilde[j, t])
-                senses.append("<=")
-                names.append(f"upper_bound_{j}_{t}_2")
-
-                row_idx += 1
-
-                #Lower Bound for x[j, t] 1:
-                
-                rows.append(row_idx)
-                cols.append(x_idx)
-                data.append(1.0)
-
-                for s in range(max(0, t - int(parameters.holding_time[j])), t + 1):
-                    coeff = L_tilde[j, s] - L_bar[j, t]
-
-                    if coeff != 0:
-                        rows.append(row_idx)
-                        cols.append(num_assets * time_horizon + j * time_horizon + s)
-                        data.append(-coeff)
-
-                rhs.append(L_bar[j, t])
-                senses.append(">=")
-                names.append(f"lower_bound_{j}_{t}_1")
-
-                row_idx += 1
-
-                #Lower Bound for x[j, t] 2:
-                rows.append(row_idx)
-                cols.append(x_idx)
-                data.append(1.0)
-
-                for s in range(t + 1, min(time_horizon, t + 1 + int(parameters.holding_time[j]))):
-                    coeff = L_bar[j, s] - L_tilde[j, t]
-
-                    if coeff != 0:
-                        rows.append(row_idx)
-                        cols.append(num_assets * time_horizon + j * time_horizon + s)
-                        data.append(-coeff)
-
-                rhs.append(L_tilde[j, t])
-                senses.append(">=")
-                names.append(f"lower_bound_{j}_{t}_2")
-                
-                row_idx += 1
-
-        #Create the sparse matrix for the constraints
-        A = coo_matrix((data, (rows, cols)), shape=(row_idx, 2 * num_assets * time_horizon)).tocsr()
-
-        m.addMConstr(A, variables, np.array(senses, dtype="S1"), np.asarray(rhs, dtype=float), name = names)"""
-        
 
     #Asset Holding Constraints: Ensure that if an asset is invested/divested, action cannot be taken until h years have passed.
     for j in range(num_assets):
@@ -243,7 +237,18 @@ def det_ef_opt(parameters):
                 name=f"holding_constraint_{j}_{t}"
             )
 
+    #LP relaxation copy
+    m.update()
+    lp = m.copy()
+    lp = lp.relax()
+    lp.Params.OutputFlag = 0
+    lp.Params.Presolve = 0
+    lp.optimize()
+    lp_bound = lp.ObjVal if lp.Status == GRB.OPTIMAL else None
+    lp.dispose()
+
     #Optimize the model
+    m.Params.OutputFlag = 0
     m.optimize()
 
     #Check if the optimization was successful (edit later to return more information)
@@ -252,6 +257,7 @@ def det_ef_opt(parameters):
             "objective_value": m.objVal,
             "runtime": m.Runtime,
             "decision_variables": {var.varName: var.x for var in m.getVars()},
+            "lp_bound": lp_bound
         }
 
         return solution
@@ -414,7 +420,6 @@ if __name__ == "__main__":
             self.b = rng.uniform(-10, 10, size=(self.num_assets, self.time_horizon))
             self.cost = rng.uniform(0, 10, size=(self.num_assets, self.time_horizon))
 
-            #
             #Upper/Lower bound
             l = rng.uniform(0, 0.5, size=(self.num_assets, self.time_horizon))
             u = rng.uniform(0.5, 1.0, size=(self.num_assets, self.time_horizon))
