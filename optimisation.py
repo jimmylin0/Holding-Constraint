@@ -1,3 +1,4 @@
+from dataclasses import dataclass, field
 import gurobipy as gp
 from gurobipy import GRB
 import numpy as np
@@ -5,10 +6,52 @@ import matplotlib.pyplot as plt
 import pandas as pd
 from scipy.sparse import coo_matrix
 
+@dataclass
+class Parameters:
+    # Number of assets and time horizon
+    num_assets: int = 40
+    time_horizon: int = 200
+    seed_number: int = 100
+
+    # CAPEX constraint
+    C_CAPEX: float = 500.0
+
+    #Version of the optimization model to use
+    bpp: bool = False
+    vb: bool = False
+    tighterM: bool = False
+
+    # Defined with __post_init__
+    b: np.ndarray = field(init=False)
+    cost: np.ndarray = field(init=False)
+    L: np.ndarray = field(init=False)
+    U: np.ndarray = field(init=False)
+    holding_time: np.ndarray = field(init=False)
+    x_initial: np.ndarray = field(init=False) 
+
+    def __post_init__(self):
+        #Minimum holding
+        self.holding_time = np.ones(self.num_assets) * 25
+
+        #initial positions
+        self.x_initial = np.zeros(self.num_assets)  # Initialize with zeros or any other desired initial positions
+
+        #Randomly generated expected returns and costs for each asset at each time period
+        rng = np.random.default_rng(self.seed_number)
+        self.b = rng.uniform(-10, 10, size=(self.num_assets, self.time_horizon))
+        self.cost = rng.uniform(0, 10, size=(self.num_assets, self.time_horizon))
+
+        #Upper/Lower bound
+        l = rng.uniform(0, 0.5, size=(self.num_assets, self.time_horizon))
+        u = rng.uniform(0.5, 1.0, size=(self.num_assets, self.time_horizon))
+
+        self.U = u
+        self.L = l
+
 #Deterministic Equivalent Formulation
-def det_ef_opt(parameters):
+def det_ef_opt(parameters: Parameters):
     """
-    This function performs deterministic equivalent optimization on a given scenario tree.
+    This function performs the optimisation in the sample problem.
 
     Parameters:
     parameters (dataclass): A dataclass containing all the necessary parameters for the optimization, including:
@@ -19,7 +62,7 @@ def det_ef_opt(parameters):
         - L: A 2D array of shape (num_assets, time_horizon) representing the lower bounds for each asset at each time period.
         - holding_time: A 1D array of shape (num_assets,) representing the minimum holding time for each asset.
         - x_initial: A 1D array of shape (num_assets,) representing the initial positions for each asset.
-        - version: A string indicating the version of the optimization model to use (default is "v1").
+        
 
     Returns:
     dict: A dictionary containing the optimization results, including:
@@ -421,51 +464,7 @@ def compare_solutions(result, result_preprocessed, tol=1e-6):
 #################
 
 if __name__ == "__main__":
-    from dataclasses import dataclass, field
     import time
-
-    #parameters for input
-    @dataclass
-    class Parameters:
-        # Number of assets and time horizon
-        num_assets: int = 40
-        time_horizon: int = 200
-        seed_number: int = 100
-
-        # CAPEX constraint
-        C_CAPEX: float = 500.0
-
-        #Version of the optimization model to use
-        bpp: bool = False
-        vb: bool = False
-        tighterM: bool = False
-
-        # Defined with __post_init__
-        b: np.ndarray = field(init=False)
-        cost: np.ndarray = field(init=False)
-        L: np.ndarray = field(init=False)
-        U: np.ndarray = field(init=False)
-        holding_time: np.ndarray = field(init=False)
-        x_initial: np.ndarray = field(init=False) 
-
-        def __post_init__(self):
-            #Minimum holding
-            self.holding_time = np.ones(self.num_assets) * 25
-
-            #initial positions
-            self.x_initial = np.zeros(self.num_assets)  # Initialize with zeros or any other desired initial positions
-
-            #Randomly generated expected returns and costs for each asset at each time period
-            rng = np.random.default_rng(self.seed_number)
-            self.b = rng.uniform(-10, 10, size=(self.num_assets, self.time_horizon))
-            self.cost = rng.uniform(0, 10, size=(self.num_assets, self.time_horizon))
-
-            #Upper/Lower bound
-            l = rng.uniform(0, 0.5, size=(self.num_assets, self.time_horizon))
-            u = rng.uniform(0.5, 1.0, size=(self.num_assets, self.time_horizon))
-
-            self.U = u
-            self.L = l
 
     #run optimisation and track runtime
     

@@ -1,49 +1,49 @@
-from optimisation import det_ef_opt
 from dataclasses import dataclass, field, replace
 import numpy as np
 import pandas as pd
+from optimisation import det_ef_opt, Parameters
 
-#default parameters for input
-@dataclass
-class Parameters:
-    # Number of assets and time horizon
-    num_assets: int = 40
-    time_horizon: int = 200
-    seed_number: int = 100
+# #default parameters for input
+# @dataclass
+# class Parameters:
+#     # Number of assets and time horizon
+#     num_assets: int = 40
+#     time_horizon: int = 200
+#     seed_number: int = 100
 
-    # CAPEX constraint
-    C_CAPEX: float = 500.0
+#     # CAPEX constraint
+#     C_CAPEX: float = 500.0
 
-    #Version of the optimization model to use
-    bpp: bool = False
-    vb: bool = False
-    tighterM: bool = False
+#     #Version of the optimization model to use
+#     bpp: bool = False
+#     vb: bool = False
+#     tighterM: bool = False
 
-    # Defined with __post_init__
-    b: np.ndarray = field(init=False)
-    cost: np.ndarray = field(init=False)
-    L: np.ndarray = field(init=False)
-    U: np.ndarray = field(init=False)
-    holding_time: np.ndarray = field(init=False)
-    x_initial: np.ndarray = field(init=False)
-    def __post_init__(self):
-        #Minimum holding
-        self.holding_time = np.ones(self.num_assets) * 5
+#     # Defined with __post_init__
+#     b: np.ndarray = field(init=False)
+#     cost: np.ndarray = field(init=False)
+#     L: np.ndarray = field(init=False)
+#     U: np.ndarray = field(init=False)
+#     holding_time: np.ndarray = field(init=False)
+#     x_initial: np.ndarray = field(init=False)
+#     def __post_init__(self):
+#         #Minimum holding
+#         self.holding_time = np.ones(self.num_assets) * 5
     
-        #initial positions
-        self.x_initial = np.zeros(self.num_assets)  # Initialize with zeros or any other desired initial positions
+#         #initial positions
+#         self.x_initial = np.zeros(self.num_assets)  # Initialize with zeros or any other desired initial positions
     
-        #Randomly generated expected returns and costs for each asset at each time period
-        rng = np.random.default_rng(self.seed_number)
-        self.b = rng.uniform(-10, 10, size=(self.num_assets, self.time_horizon))
-        self.cost = rng.uniform(0, 10, size=(self.num_assets, self.time_horizon))
+#         #Randomly generated expected returns and costs for each asset at each time period
+#         rng = np.random.default_rng(self.seed_number)
+#         self.b = rng.uniform(-10, 10, size=(self.num_assets, self.time_horizon))
+#         self.cost = rng.uniform(0, 10, size=(self.num_assets, self.time_horizon))
     
-        #Upper/Lower bound
-        l = rng.uniform(0, 0.5, size=(self.num_assets, self.time_horizon))
-        u = rng.uniform(0.5, 1.0, size=(self.num_assets, self.time_horizon))
+#         #Upper/Lower bound
+#         l = rng.uniform(0, 0.5, size=(self.num_assets, self.time_horizon))
+#         u = rng.uniform(0.5, 1.0, size=(self.num_assets, self.time_horizon))
     
-        self.U = u
-        self.L = l
+#         self.U = u
+#         self.L = l
 
 #this document will be for writing the code for the proper testing of optimisation problem
 p = Parameters()
