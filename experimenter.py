@@ -1,4 +1,4 @@
-from optimisation import det_ef_opt, bound_preprocess
+from optimisation import det_ef_opt
 from dataclasses import dataclass, field, replace
 import numpy as np
 import pandas as pd
@@ -15,6 +15,7 @@ class Parameters:
     C_CAPEX: float = 500.0
 
     #Version of the optimization model to use
+    bpp: bool = False
     vb: bool = False
     tighterM: bool = False
 
@@ -47,10 +48,9 @@ class Parameters:
 #this document will be for writing the code for the proper testing of optimisation problem
 p = Parameters()
 
-new_u, new_l = bound_preprocess(p)
+
 p_bp = Parameters()
-p_bp.U = new_u
-p_bp.L = new_l
+p_bp = replace(p, bpp = True)
 p_vb = replace(p, vb = True)
 p_tm = replace(p, tighterM = True)
 p_bpvb = replace(p_bp, vb = True)

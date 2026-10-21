@@ -48,17 +48,56 @@ def det_ef_opt(parameters):
     #Auxiliary Binary Variables for Investment and Divestment
     delta = m.addVars(num_assets, time_horizon, vtype=GRB.BINARY, name="delta")
 
+    if parameters.bpp is True:
+        #bound preprocess routine
+        def bound_preprocess(parameters):
+            """
+            This function preprocesses the upper and lower bounds for each asset at each time period.
+
+            Parameters:
+            parameters (dataclass): A dataclass containing all the necessary parameters for the optimization, including:
+                - U: A 2D array of shape (num_assets, time_horizon) representing the upper bounds for each asset at each time period.
+                - L: A 2D array of shape (num_assets, time_horizon) representing the lower bounds for each asset at each time period.
+                - holding_time: A 1D array of shape (num_assets,) representing the minimum holding time for each asset.
+            """
+
+            u = parameters.U.copy()
+            l = parameters.L.copy()
+            h = parameters.holding_time
+
+            time_horizon = parameters.U.shape[1]  # U is a 2D array with shape (num_assets, time_horizon)
+            num_assets = len(parameters.U)
+
+            for j in range(num_assets):
+                for t in range(time_horizon - 1):
+                    alpha = min(u[j, s] for s in range(t + 1, min(time_horizon, t + 1 + int(h[j]))))
+                    replacement = max(u[j, t-1], alpha)
+                    if u[j, t] > replacement:
+                        u[j, t] = replacement
+
+                    beta = max(l[j, s] for s in range(t + 1, min(time_horizon, t + 1 + int(h[j]))))
+                    replacement = min(l[j, t-1], beta)
+                    if l[j, t] < replacement:
+                        l[j, t] = replacement
+
+            return u, l
+
+        u, l = bound_preprocess(parameters)
+    else:
+        u = parameters.U
+        l = parameters.L
+
     if parameters.tighterM is True or parameters.vb is True:
-        temp_U = np.column_stack((parameters.x_initial, parameters.U))
-        temp_L = np.column_stack((parameters.x_initial, parameters.L))
+        temp_U = np.column_stack((parameters.x_initial, u))
+        temp_L = np.column_stack((parameters.x_initial, l))
         
         #Defining U_tilde and L_tilde for the tighter big-M constraints
-        U_tilde = np.full(parameters.U.shape, np.nan)
-        L_tilde = np.full(parameters.U.shape, np.nan)
+        U_tilde = np.full(u.shape, np.nan)
+        L_tilde = np.full(l.shape, np.nan)
         
         #Defining U_bar and L_bar for the tighter big-M constraints
-        U_bar = np.full(parameters.U.shape, np.nan)
-        L_bar = np.full(parameters.U.shape, np.nan)
+        U_bar = np.full(u.shape, np.nan)
+        L_bar = np.full(l.shape, np.nan)
         
         #Define U_tilde, L_tilde, U_bar, and L_bar based on the holding time for each asset
         for j in range(num_assets):
@@ -213,19 +252,19 @@ def det_ef_opt(parameters):
         #Upper and Lower Bounds for Decision Variables
         for j in range(num_assets):
             for t in range(time_horizon):
-                x[j, t].lb = parameters.L[j, t]
-                x[j, t].ub = parameters.U[j, t]
+                x[j, t].lb = l[j, t]
+                x[j, t].ub = u[j, t]
 
     if parameters.tighterM is False:
         for j in range(num_assets):
             #Use initial positions for the first time period to set the big-M constraints
-            m.addConstr(x[j, 0] - parameters.x_initial[j] <= (parameters.U[j, 0] - parameters.x_initial[j]) * delta[j, 0], name=f"bigM_invest_{j}_0")
-            m.addConstr(parameters.x_initial[j] - x[j, 0] <= (parameters.x_initial[j] - parameters.L[j, 0]) * delta[j, 0], name=f"bigM_divest_{j}_0")
+            m.addConstr(x[j, 0] - parameters.x_initial[j] <= (u[j, 0] - parameters.x_initial[j]) * delta[j, 0], name=f"bigM_invest_{j}_0")
+            m.addConstr(parameters.x_initial[j] - x[j, 0] <= (parameters.x_initial[j] - l[j, 0]) * delta[j, 0], name=f"bigM_divest_{j}_0")
 
 
             for t in range(1, time_horizon):
-                m.addConstr(x[j, t] - x[j, t - 1] <= (parameters.U[j, t] - parameters.L[j, t - 1]) * delta[j, t], name=f"bigM_invest_{j}_{t}")
-                m.addConstr(x[j, t - 1] - x[j, t] <= (parameters.U[j, t - 1] - parameters.L[j, t]) * delta[j, t], name=f"bigM_divest_{j}_{t}")
+                m.addConstr(x[j, t] - x[j, t - 1] <= (u[j, t] - l[j, t - 1]) * delta[j, t], name=f"bigM_invest_{j}_{t}")
+                m.addConstr(x[j, t - 1] - x[j, t] <= (u[j, t - 1] - l[j, t]) * delta[j, t], name=f"bigM_divest_{j}_{t}")
 
     #Asset Holding Constraints: Ensure that if an asset is invested/divested, action cannot be taken until h years have passed.
     for j in range(num_assets):
@@ -397,6 +436,7 @@ if __name__ == "__main__":
         C_CAPEX: float = 500.0
 
         #Version of the optimization model to use
+        bpp: bool = False
         vb: bool = False
         tighterM: bool = False
 
@@ -449,10 +489,7 @@ if __name__ == "__main__":
     #run optimisation with the bound preprocess procedure and track runtime
     u, l = bound_preprocess(Parameters())
     p = Parameters()
-    p.U = u
-    p.L = l
-    p.tighterM = True
-    p.vb = True
+    p.bpp = True
     #plot bounds for the first asset with preprocessing
     #fig, ax = plot_bounds(p.U, p.L, asset_idx=0)
     #plt.show()
