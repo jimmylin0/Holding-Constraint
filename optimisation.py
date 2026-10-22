@@ -9,9 +9,29 @@ from scipy.sparse import coo_matrix
 @dataclass
 class Parameters:
     # Number of assets and time horizon
+    num_assets: int
+    time_horizon: int
+
+    # CAPEX constraint
+    C_CAPEX: float
+
+    #Version of the optimization model to use
+    bpp: bool
+    vb: bool
+    tighterM: bool
+
+    # Defined with __post_init__
+    b: np.ndarray
+    cost: np.ndarray
+    L: np.ndarray
+    U: np.ndarray
+    holding_time: np.ndarray
+    x_initial: np.ndarray
+
+def generate_parameters(seed_number = 100) -> Parameters:
+    # Number of assets and time horizon
     num_assets: int = 40
     time_horizon: int = 200
-    seed_number: int = 100
 
     # CAPEX constraint
     C_CAPEX: float = 500.0
@@ -21,32 +41,34 @@ class Parameters:
     vb: bool = False
     tighterM: bool = False
 
-    # Defined with __post_init__
-    b: np.ndarray = field(init=False)
-    cost: np.ndarray = field(init=False)
-    L: np.ndarray = field(init=False)
-    U: np.ndarray = field(init=False)
-    holding_time: np.ndarray = field(init=False)
-    x_initial: np.ndarray = field(init=False) 
+    #Minimum holding
+    holding_time = np.ones(num_assets) * 25
 
-    def __post_init__(self):
-        #Minimum holding
-        self.holding_time = np.ones(self.num_assets) * 25
+    #initial positions
+    x_initial = np.zeros(num_assets)  # Initialize with zeros or any other desired initial positions
 
-        #initial positions
-        self.x_initial = np.zeros(self.num_assets)  # Initialize with zeros or any other desired initial positions
+    #Randomly generated expected returns and costs for each asset at each time period
+    rng = np.random.default_rng(seed_number)
+    b = rng.uniform(-10, 10, size=(num_assets, time_horizon))
+    cost = rng.uniform(0, 10, size=(num_assets, time_horizon))
 
-        #Randomly generated expected returns and costs for each asset at each time period
-        rng = np.random.default_rng(self.seed_number)
-        self.b = rng.uniform(-10, 10, size=(self.num_assets, self.time_horizon))
-        self.cost = rng.uniform(0, 10, size=(self.num_assets, self.time_horizon))
+    #Upper/Lower bound
+    L = rng.uniform(0, 0.5, size=(num_assets, time_horizon))
+    U = rng.uniform(0.5, 1.0, size=(num_assets, time_horizon))
 
-        #Upper/Lower bound
-        l = rng.uniform(0, 0.5, size=(self.num_assets, self.time_horizon))
-        u = rng.uniform(0.5, 1.0, size=(self.num_assets, self.time_horizon))
-
-        self.U = u
-        self.L = l
+    return Parameters(
+        num_assets = num_assets, 
+        time_horizon = time_horizon, 
+        C_CAPEX = C_CAPEX,
+        bpp = bpp,
+        vb = vb,
+        tighterM = tighterM,
+        b = b,
+        cost = cost,
+        L = L,
+        U = U,
+        holding_time = holding_time,
+        x_initial = x_initial)
 
 #Deterministic Equivalent Formulation
 def det_ef_opt(parameters: Parameters):
@@ -466,10 +488,12 @@ def compare_solutions(result, result_preprocessed, tol=1e-6):
 if __name__ == "__main__":
     import time
 
+    params = generate_parameters()
+
     #run optimisation and track runtime
     
     full_runtime_timer_start = time.time()
-    result = det_ef_opt(Parameters())
+    result = det_ef_opt(params)
     full_runtime_timer_end = time.time()
 
     model_building_time = full_runtime_timer_end - full_runtime_timer_start - result['runtime']
@@ -486,15 +510,13 @@ if __name__ == "__main__":
     """
 
     #run optimisation with the bound preprocess procedure and track runtime
-    u, l = bound_preprocess(Parameters())
-    p = Parameters()
-    p.bpp = True
+    params.bpp = True
     #plot bounds for the first asset with preprocessing
     #fig, ax = plot_bounds(p.U, p.L, asset_idx=0)
     #plt.show()
     
     full_runtime_timer_start2 = time.time()
-    result_preprocessed = det_ef_opt(p)
+    result_preprocessed = det_ef_opt(params)
     full_runtime_timer_end2 = time.time()
     
     model_building_time = full_runtime_timer_end2 - full_runtime_timer_start2 - result_preprocessed['runtime']
