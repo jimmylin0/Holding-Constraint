@@ -15,11 +15,6 @@ class Parameters:
     # CAPEX constraint
     C_CAPEX: float
 
-    #Version of the optimization model to use
-    bpp: bool
-    vb: bool
-    tighterM: bool
-
     # Defined with __post_init__
     b: np.ndarray
     cost: np.ndarray
@@ -35,11 +30,6 @@ def generate_parameters(seed_number = 100) -> Parameters:
 
     # CAPEX constraint
     C_CAPEX: float = 500.0
-
-    #Version of the optimization model to use
-    bpp: bool = False
-    vb: bool = False
-    tighterM: bool = False
 
     #Minimum holding
     holding_time = np.ones(num_assets) * 25
@@ -60,9 +50,6 @@ def generate_parameters(seed_number = 100) -> Parameters:
         num_assets = num_assets, 
         time_horizon = time_horizon, 
         C_CAPEX = C_CAPEX,
-        bpp = bpp,
-        vb = vb,
-        tighterM = tighterM,
         b = b,
         cost = cost,
         L = L,
@@ -71,12 +58,14 @@ def generate_parameters(seed_number = 100) -> Parameters:
         x_initial = x_initial)
 
 #Deterministic Equivalent Formulation
-def det_ef_opt(parameters: Parameters):
+def det_ef_opt(parameters: Parameters, bpp = False, tighterM = False, vb = False):
     """
     This function performs the optimisation in the sample problem.
 
-    Parameters:
+    Input:
     parameters (dataclass): A dataclass containing all the necessary parameters for the optimization, including:
+        - num_assets: Number of assets in the problem.
+        - time_horizon: Time horizon of the problem.
         - b: A 2D array of shape (num_assets, time_horizon) representing the expected returns for each asset at each time period.
         - cost: A 2D array of shape (num_assets, time_horizon) representing the costs associated with each asset at each time period.
         - C_CAPEX: A scalar representing the capital expenditure constraint.
@@ -84,6 +73,9 @@ def det_ef_opt(parameters: Parameters):
         - L: A 2D array of shape (num_assets, time_horizon) representing the lower bounds for each asset at each time period.
         - holding_time: A 1D array of shape (num_assets,) representing the minimum holding time for each asset.
         - x_initial: A 1D array of shape (num_assets,) representing the initial positions for each asset.
+    bpp (bool): Enable/disable bound preprocessing.
+    tighterM (bool): Enable/disable tighter big M constraints.
+    vb (bool): Enable/disable variable bounds.
         
 
     Returns:
@@ -113,7 +105,7 @@ def det_ef_opt(parameters: Parameters):
     #Auxiliary Binary Variables for Investment and Divestment
     delta = m.addVars(num_assets, time_horizon, vtype=GRB.BINARY, name="delta")
 
-    if parameters.bpp is True:
+    if bpp is True:
         #bound preprocess routine
         def bound_preprocess(parameters):
             """
@@ -152,7 +144,7 @@ def det_ef_opt(parameters: Parameters):
         u = parameters.U
         l = parameters.L
 
-    if parameters.tighterM is True or parameters.vb is True:
+    if tighterM is True or vb is True:
         temp_U = np.column_stack((parameters.x_initial, u))
         temp_L = np.column_stack((parameters.x_initial, l))
         
@@ -178,7 +170,7 @@ def det_ef_opt(parameters: Parameters):
                     L_bar[j, t] = temp_L[j, max(0, t + 1 - int(parameters.holding_time[j])):t + 1].max()
 
         #Variable bounds
-        if parameters.vb is True:
+        if vb is True:
             #Tighter Upper and Lower Bounds for Decision Variables
             for j in range(num_assets):
                 for t in range(time_horizon):
@@ -303,7 +295,7 @@ def det_ef_opt(parameters: Parameters):
             m.addMConstr(A, variables, np.array(senses, dtype="S1"), np.asarray(rhs, dtype=float), name = names)"""
 
         #Tighter M
-        if parameters.tighterM is True:
+        if tighterM is True:
             #Tighter Big-M Constraints for Investment and Divestment
             for j in range(num_assets):
                 m.addConstr(x[j, 0] - parameters.x_initial[j] <= (U_tilde[j, 0] - parameters.x_initial[j]) * delta[j, 0], name=f"bigM_invest_{j}_0")
@@ -313,14 +305,14 @@ def det_ef_opt(parameters: Parameters):
                     m.addConstr(x[j, t] - x[j, t - 1] <= (U_tilde[j, t] - L_bar[j, t]) * delta[j, t], name=f"bigM_invest_{j}_{t}")
                     m.addConstr(x[j, t - 1] - x[j, t] <= (U_bar[j, t] - L_tilde[j, t]) * delta[j, t], name=f"bigM_divest_{j}_{t}")
     
-    if parameters.vb is False:
+    if vb is False:
         #Upper and Lower Bounds for Decision Variables
         for j in range(num_assets):
             for t in range(time_horizon):
                 x[j, t].lb = l[j, t]
                 x[j, t].ub = u[j, t]
 
-    if parameters.tighterM is False:
+    if tighterM is False:
         for j in range(num_assets):
             #Use initial positions for the first time period to set the big-M constraints
             m.addConstr(x[j, 0] - parameters.x_initial[j] <= (u[j, 0] - parameters.x_initial[j]) * delta[j, 0], name=f"bigM_invest_{j}_0")
@@ -346,7 +338,6 @@ def det_ef_opt(parameters: Parameters):
     lp = m.copy()
     lp = lp.relax()
     lp.Params.OutputFlag = 0
-    lp.Params.Presolve = 0
     lp.optimize()
     lp_bound = lp.ObjVal if lp.Status == GRB.OPTIMAL else None
     lp.dispose()
@@ -510,13 +501,9 @@ if __name__ == "__main__":
     """
 
     #run optimisation with the bound preprocess procedure and track runtime
-    params.bpp = True
-    #plot bounds for the first asset with preprocessing
-    #fig, ax = plot_bounds(p.U, p.L, asset_idx=0)
-    #plt.show()
     
     full_runtime_timer_start2 = time.time()
-    result_preprocessed = det_ef_opt(params)
+    result_preprocessed = det_ef_opt(params, bpp = True)
     full_runtime_timer_end2 = time.time()
     
     model_building_time = full_runtime_timer_end2 - full_runtime_timer_start2 - result_preprocessed['runtime']
