@@ -23,16 +23,12 @@ class Parameters:
     holding_time: np.ndarray
     x_initial: np.ndarray
 
-def generate_parameters(seed_number = 100) -> Parameters:
-    # Number of assets and time horizon
-    num_assets: int = 40
-    time_horizon: int = 200
-
+def generate_parameters(num_assets: int, time_horizon: int, min_hold: int, seed_number = 100) -> Parameters:
     # CAPEX constraint
     C_CAPEX: float = 500.0
 
     #Minimum holding
-    holding_time = np.ones(num_assets) * 25
+    holding_time = np.ones(num_assets) * min_hold
 
     #initial positions
     x_initial = np.zeros(num_assets)  # Initialize with zeros or any other desired initial positions
@@ -349,6 +345,7 @@ def det_ef_opt(parameters: Parameters, bpp = False, tighterM = False, vb = False
     #Check if the optimization was successful (edit later to return more information)
     if m.status == GRB.OPTIMAL:
         solution = {
+            "status": m.status,
             "objective_value": m.objVal,
             "runtime": m.Runtime,
             "decision_variables": {var.varName: var.x for var in m.getVars()},
