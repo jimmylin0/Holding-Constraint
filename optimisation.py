@@ -1,4 +1,4 @@
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 import gurobipy as gp
 from gurobipy import GRB
 import numpy as np
@@ -349,7 +349,8 @@ def det_ef_opt(parameters: Parameters, bpp = False, tighterM = False, vb = False
             "objective_value": m.objVal,
             "runtime": m.Runtime,
             "decision_variables": {var.varName: var.x for var in m.getVars()},
-            "lp_bound": lp_bound
+            "lp_bound": lp_bound,
+            "node_count": m.NodeCount
         }
 
         return solution

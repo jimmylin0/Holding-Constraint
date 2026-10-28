@@ -62,7 +62,8 @@ def experiment(seeds: list, param_gen: ParamGen, optimiser = det_ef_opt):
                 "objective": obj,
                 "runtime": result["runtime"],
                 "lp_bound": lp_bound,
-                "lp_gap": gap
+                "lp_gap": gap,
+                "node_count": result["node_count"]
             })
 
             #Code progress output check how much is done
@@ -76,7 +77,7 @@ if __name__ == "__main__":
     
     param_gen = partial(generate_parameters, num_assets = 40, time_horizon = 200, min_hold = 5)
     
-    seeds = [100]
+    seeds = [100, 101, 102]
 
     df = experiment(seeds, param_gen = param_gen)
     print(f"\n{df}")
