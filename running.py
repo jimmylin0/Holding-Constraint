@@ -7,7 +7,7 @@ from optimisation import det_ef_opt, generate_parameters, Parameters
 #running the experiment file
 time_horizon = 200
 # h_list = [i for i in range(time_horizon)]
-h_list = [1, 2, 4, 8, 16, 32, 64, 128]
+h_list = [1, 2, 4, 8, 16, 32]
 
 #runtime storing
 runtime = []
@@ -15,7 +15,7 @@ lp_gap = []
 
 for h in h_list:
     print(f"\n{h}")
-    param_gen = partial(generate_parameters, num_assets = 40, time_horizon = 200, min_hold = h)
+    param_gen = partial(generate_parameters, num_assets = 40, time_horizon = 50, min_hold = h)
 
     seeds = [100]
 

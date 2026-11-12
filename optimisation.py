@@ -334,12 +334,14 @@ def det_ef_opt(parameters: Parameters, bpp = False, tighterM = False, vb = False
     lp = m.copy()
     lp = lp.relax()
     lp.Params.OutputFlag = 0
+    lp.Params.Presolve = 0
     lp.optimize()
     lp_bound = lp.ObjVal if lp.Status == GRB.OPTIMAL else None
     lp.dispose()
 
     #Optimize the model
     m.Params.OutputFlag = 0
+    m.Params.Presolve = 0
     m.optimize()
 
     #Check if the optimization was successful (edit later to return more information)
