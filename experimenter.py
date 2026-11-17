@@ -75,7 +75,7 @@ def experiment(seeds: list, param_gen: ParamGen, optimiser = det_ef_opt):
 if __name__ == "__main__":
     from functools import partial
     
-    param_gen = partial(generate_parameters, num_assets = 40, time_horizon = 50, min_hold = 5)
+    param_gen = partial(generate_parameters, num_assets = 40, time_horizon = 100, min_hold = 20)
     
     seeds = [100]
 

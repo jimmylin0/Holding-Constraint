@@ -342,7 +342,6 @@ def det_ef_opt(parameters: Parameters, bpp = False, tighterM = False, vb = False
     lp.dispose()
 
     #Optimize the model
-    m.Params.OutputFlag = 0
     m.Params.Presolve = 0
     m.optimize()
 
@@ -393,7 +392,7 @@ def bound_preprocess(parameters):
 
     return u, l
 
-def plot_bounds(u, l, asset_idx=0):
+def plot_bounds(u, l, x_initial, asset_idx=0, holding_time=None):
     """
     Plot upper and lower bounds for a single asset.
 
@@ -402,6 +401,7 @@ def plot_bounds(u, l, asset_idx=0):
     u: A 2D array upper bounds with shape (num_assets, time_horizon).
     l: A 2D array lower bounds with shape (num_assets, time_horizon).
     asset_idx: int index of the asset to plot.
+    holding_time: int, the holding time for the asset.
 
     Returns
     -------
@@ -416,22 +416,29 @@ def plot_bounds(u, l, asset_idx=0):
     if not 0 <= asset_idx < u.shape[0]:
         raise IndexError("asset_idx is out of range.")
 
-    x = np.arange(u.shape[1])
+    #define initial x
+    x0 = np.asarray(x_initial)
 
-    upper = u[asset_idx]
-    lower = l[asset_idx]
+    T = u.shape[1]
+    x = np.arange(0, T + 1)
 
-    fig, ax = plt.subplots(figsize=(10, 4))
+    upper = np.concatenate([[x0[asset_idx]], u[asset_idx]])
+    lower = np.concatenate([[x0[asset_idx]], l[asset_idx]])
 
-    ax.plot(x, lower, label="Lower bound")
-    ax.plot(x, upper, label="Upper bound")
-    ax.fill_between(x, lower, upper, alpha=0.25)
+    fig, ax = plt.subplots(figsize=(10, 4), layout = "constrained")
+
+    ax.step(x, upper, label="Upper bound", color="red", linewidth = 1, where = "post")
+    ax.step(x, lower, label="Lower bound", color="blue", linewidth = 1, where = "post")
+    ax.fill_between(x, lower, upper, alpha=0.25, step = "post")
 
     ax.set_ylim(0, 1)
     ax.set_xlabel("Time")
-    ax.set_ylabel("Value")
-    ax.set_title(f"Upper and Lower Bounds — Asset {asset_idx}")
-    ax.legend()
+    ax.set_ylabel("Position")
+    if holding_time is None:
+        ax.set_title(f"Upper and Lower Bounds for Asset {asset_idx}")
+    else:
+        ax.set_title(f"Upper and Lower Bounds for Asset {asset_idx} with h = {int(holding_time[asset_idx])}")
+    ax.legend(loc = "center left", bbox_to_anchor=(1, 0.5), frameon = False)
     ax.grid(alpha=0.3)
 
     return fig, ax
@@ -479,41 +486,66 @@ def compare_solutions(result, result_preprocessed, tol=1e-6):
 #################
 
 if __name__ == "__main__":
-    import time
+    # import time
 
-    params = generate_parameters()
+    # volume = [0]
+    # for h in range(1, 100):
+    #     params = generate_parameters(num_assets=40, time_horizon=100, min_hold=h, seed_number=100)
+    #     new_U, new_L = bound_preprocess(params)
+
+    #     U_diff = params.U[0, :] - new_U[0, :]
+    #     L_diff = new_L[0, :] - params.L[0, :]
+
+    #     volume_reduced = np.sum(U_diff) + np.sum(L_diff)
+    #     volume.append(volume_reduced)
+
+    # h = np.arange(len(volume))  # 0, 1, ..., 99
+
+    # fig, ax = plt.subplots(figsize=(10, 4))
+    # ax.plot(h, volume, linewidth = 2, marker="o", markersize=3, color="blue")
+    # ax.set_xlim(0, 99)
+    # ax.set_xlabel("Minimum Holding Time (h)")
+    # ax.set_ylabel("Total volume reduced")
+    # ax.set_title("Volume Reduced Through Preprocessing Routine Plotted Against Minimum Holding Time")
+    # ax.grid(alpha=0.3)
+    # plt.show()
+
 
     #run optimisation and track runtime
+
+    params = generate_parameters(num_assets=40, time_horizon=100, min_hold=20, seed_number=100)
     
-    full_runtime_timer_start = time.time()
-    result = det_ef_opt(params)
-    full_runtime_timer_end = time.time()
+    # full_runtime_timer_start = time.time()
+    # result = det_ef_opt(params)
+    # full_runtime_timer_end = time.time()
 
-    model_building_time = full_runtime_timer_end - full_runtime_timer_start - result['runtime']
+    # model_building_time = full_runtime_timer_end - full_runtime_timer_start - result['runtime']
 
-    #For tracking objective function value
-    print(f"Objective Value: {result['objective_value']}")
-    print(f"Runtime: {result['runtime']} seconds")
-    print(f"Model Building Time: {model_building_time} seconds")
-    """
+    # #For tracking objective function value
+    # print(f"Objective Value: {result['objective_value']}")
+    # print(f"Runtime: {result['runtime']} seconds")
+    # print(f"Model Building Time: {model_building_time} seconds")
+
     #plot bounds for the first asset without preprocessing
-    p = Parameters()
-    fig, ax = plot_bounds(p.U, p.L, asset_idx=0)
+    fig, ax = plot_bounds(params.U, params.L, params.x_initial, asset_idx=0)
     plt.show()
-    """
+
+    new_U, new_L = bound_preprocess(params)
+    fig, ax = plot_bounds(new_U, new_L, params.x_initial, asset_idx=0, holding_time=params.holding_time)
+    plt.show()
 
     #run optimisation with the bound preprocess procedure and track runtime
     
-    full_runtime_timer_start2 = time.time()
-    result_preprocessed = det_ef_opt(params, bpp = True)
-    full_runtime_timer_end2 = time.time()
+    # full_runtime_timer_start2 = time.time()
+    # result_preprocessed = det_ef_opt(params, bpp = True)
+    # full_runtime_timer_end2 = time.time()
     
-    model_building_time = full_runtime_timer_end2 - full_runtime_timer_start2 - result_preprocessed['runtime']
+    # model_building_time = full_runtime_timer_end2 - full_runtime_timer_start2 - result_preprocessed['runtime']
     
-    #For tracking objective function value
-    print(f"Objective Value: {result_preprocessed['objective_value']}")
-    print(f"Runtime: {result_preprocessed['runtime']} seconds")
-    print(f"Model Building Time: {model_building_time} seconds")
+    # #For tracking objective function value
+    # print(f"Objective Value: {result_preprocessed['objective_value']}")
+    # print(f"Runtime: {result_preprocessed['runtime']} seconds")
+    # print(f"Model Building Time: {model_building_time} seconds")
 
     #debug in case to compare the optimisation output with and without the bound preprocess procedure
     #if correct difference should be zero and no missing variables
