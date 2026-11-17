@@ -84,6 +84,8 @@ def det_ef_opt(parameters: Parameters, bpp = False, tighterM = False, vb = False
     time_horizon = parameters.b.shape[1]  # b is a 2D array with shape (num_assets, time_horizon)
     num_assets = len(parameters.b)  # Number of assets
 
+    print(f"Number of assets: {num_assets}, Time horizon: {time_horizon}")
+
     m = gp.Model("Deterministic_Equivalent_Optimization")
 
     #Create decision variables for each asset, time period, and scenario
